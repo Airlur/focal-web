@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 这是一个自定义的工具类，用于隐藏滚动条但保留滚动功能 */
+/* 我们在 Sidebar.jsx 里用到了 scrollbar-hide */
+@layer utilities {
+  .scrollbar-hide::-webkit-scrollbar {
+      display: none;
+  }
+  .scrollbar-hide {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+  }
+}
+
+/* 确保 html 和 body 占满全屏，背景色防止出现白边 */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
