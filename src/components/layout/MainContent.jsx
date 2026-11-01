@@ -74,6 +74,11 @@ const MainContent = ({ onFullscreen }) => {
     <div ref={ref} {...props}>{children}</div>
   )), []);
 
+  // components 对象必须 memoize，否则每次渲染都传新引用给 Virtuoso
+  const gridComponents = useMemo(() => (
+    { List: GridListContainer, Item: GridItemContainer }
+  ), [GridListContainer, GridItemContainer]);
+
   // --- 列表表头组件 (修复对齐问题) ---
   const ListHeader = () => (
     // 这里的 padding-x (px-4) 对应 ListRow 外层的 padding
@@ -134,6 +139,9 @@ const MainContent = ({ onFullscreen }) => {
           <ListHeader />
           <div className="flex-1">
             <Virtuoso
+              // 修复：库从空→非空时 Virtuoso 的可视区测量存在竞态（可能渲染 0 行且滚动也不恢复），
+              // 用 key 在空/非空边界强制重挂载，让它在有数据的状态下重新初始化测量。
+              key={filteredAndSortedItems.length > 0 ? 'list-has-items' : 'list-empty'}
               style={{ height: '100%' }}
               data={filteredAndSortedItems}
               itemContent={(index, item) => (
@@ -171,13 +179,16 @@ const MainContent = ({ onFullscreen }) => {
     // --- GRID 模式 ---
     return (
       <VirtuosoGrid
+        // 修复：同 LIST 模式——空→非空转变时重挂载，规避首次导入 0 卡片的测量竞态
+        key={filteredAndSortedItems.length > 0 ? 'grid-has-items' : 'grid-empty'}
         style={{ height: '100%' }}
-        totalCount={filteredAndSortedItems.length}
-        components={{ List: GridListContainer, Item: GridItemContainer }}
-        itemContent={(index) => (
+        data={filteredAndSortedItems}
+        computeItemKey={(_, item) => item.id}
+        components={gridComponents}
+        itemContent={(_, item) => (
           <MediaCard 
-            item={filteredAndSortedItems[index]} 
-            onClick={() => onFullscreen(filteredAndSortedItems[index])}
+            item={item} 
+            onClick={() => onFullscreen(item)}
             onContextMenu={handleContextMenu}
           />
         )}
@@ -191,17 +202,24 @@ const MainContent = ({ onFullscreen }) => {
       
       {/* 底部状态栏 */}
       <div className="fixed bottom-0 right-0 left-64 h-8 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 text-xs text-gray-500 shrink-0 z-10">
-          <div>{filteredAndSortedItems.length} items</div>
-          <div>{viewMode === 'masonry' ? 'Masonry' : viewMode === 'grid' ? 'Virtual Grid' : 'Virtual List'} • {columns} Cols</div>
+          <div>{language === 'zh' ? `${filteredAndSortedItems.length} 项` : `${filteredAndSortedItems.length} items`}</div>
+          <div>
+            {viewMode === 'masonry'
+              ? (language === 'zh' ? '瀑布流' : 'Masonry')
+              : viewMode === 'grid'
+                ? (language === 'zh' ? '虚拟网格' : 'Virtual Grid')
+                : (language === 'zh' ? '虚拟列表' : 'Virtual List')}
+            {' • '}{columns} {language === 'zh' ? '列' : 'Cols'}
+          </div>
       </div>
 
       {/* 右键菜单 */}
       {contextMenu && (
         <div className="fixed z-50 bg-white dark:bg-gray-800 shadow-xl rounded-lg border border-gray-100 dark:border-gray-700 py-1 w-48 text-sm" style={{ top: contextMenu.y, left: contextMenu.x }} onMouseLeave={closeContextMenu}>
-           <button onClick={() => { onFullscreen(items.find(i => i.id === contextMenu.itemId)); closeContextMenu(); }} className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 flex items-center gap-2"><Maximize2 size={14} /> Open</button>
-           <button onClick={() => handleFavorite(contextMenu.itemId)} className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 flex items-center gap-2"><Heart size={14} /> Favorite</button>
+           <button onClick={() => { onFullscreen(items.find(i => i.id === contextMenu.itemId)); closeContextMenu(); }} className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 flex items-center gap-2"><Maximize2 size={14} /> {language === 'zh' ? '打开' : 'Open'}</button>
+           <button onClick={() => handleFavorite(contextMenu.itemId)} className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 flex items-center gap-2"><Heart size={14} /> {language === 'zh' ? '收藏' : 'Favorite'}</button>
            <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>
-           <button onClick={() => handleDelete(contextMenu.itemId)} className="w-full text-left px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2"><Trash2 size={14} /> Delete</button>
+           <button onClick={() => handleDelete(contextMenu.itemId)} className="w-full text-left px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 flex items-center gap-2"><Trash2 size={14} /> {language === 'zh' ? '删除' : 'Delete'}</button>
         </div>
       )}
     </div>

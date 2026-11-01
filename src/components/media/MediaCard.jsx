@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { Video, Heart } from 'lucide-react';
-import { useMediaStore } from '../../store/useMediaStore';
 
 const formatBytes = (bytes, decimals = 2) => {
   if (!+bytes) return '0 Bytes';
@@ -13,16 +12,6 @@ const formatBytes = (bytes, decimals = 2) => {
 
 const MediaCard = React.memo(({ item, masonry, onClick, onContextMenu }) => {
   const [isHovered, setIsHovered] = useState(false);
-  const { updateItem } = useMediaStore();
-
-  const handleImageLoad = (e) => {
-    if (item.width === 0) {
-      updateItem(item.id, { 
-        width: e.target.naturalWidth, 
-        height: e.target.naturalHeight 
-      });
-    }
-  };
 
   return (
     // w-full 撑满 Masonry 传入的 Flex 列宽
@@ -32,7 +21,7 @@ const MediaCard = React.memo(({ item, masonry, onClick, onContextMenu }) => {
           group relative rounded-xl overflow-hidden bg-white dark:bg-gray-800 cursor-pointer 
           transition-all duration-200 ring-1 ring-gray-200 dark:ring-gray-800 
           ${isHovered ? 'ring-2 ring-brand-500 shadow-lg z-10' : 'shadow-sm'}
-          ${masonry ? '' : 'aspect-square'} /* Masonry 模式下移除强制宽高比 */
+          ${masonry ? '' : 'aspect-square'}
         `}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
@@ -47,15 +36,19 @@ const MediaCard = React.memo(({ item, masonry, onClick, onContextMenu }) => {
             )}
             
             {item.type === 'image' ? (
-              <img 
-                src={item.url} 
-                onLoad={handleImageLoad}
-                className={`w-full h-full object-cover transition-transform duration-500 ${isHovered ? 'scale-105' : 'scale-100'}`} 
-                alt={item.name} 
-                loading="lazy"
-              />
+              item.thumbUrl ? (
+                <img 
+                  src={item.thumbUrl} 
+                  className={`w-full h-full object-cover transition-transform duration-500 ${isHovered ? 'scale-105' : 'scale-100'}`} 
+                  alt={item.name} 
+                  decoding="async"
+                />
+              ) : (
+                // 缩略图生成前的占位
+                <div className="w-full h-full animate-pulse bg-gray-200 dark:bg-gray-800" />
+              )
             ) : (
-              <video src={item.url} className="w-full h-full object-cover opacity-80" />
+              <video src={item.url} className="w-full h-full object-cover opacity-80" preload="metadata" muted />
             )}
             
             <div className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent transition-opacity duration-200 ${isHovered ? 'opacity-100' : 'opacity-0'}`} />

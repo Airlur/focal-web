@@ -20,3 +20,62 @@ html, body, #root {
   margin: 0;
   padding: 0;
 }
+
+/* ---------- 纯 CSS 悬浮提示（data-tip 属性） ---------- */
+/* 用法：<button data-tip="放大">。默认显示在上方，加 data-tip-pos="bottom" 显示在下方 */
+/* :where() 特异性为 0，只对本身没有定位的元素生效，不覆盖 Tailwind 的 fixed/absolute */
+:where([data-tip]) { position: relative; }
+[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  background: rgba(17, 17, 17, 0.92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 90;
+}
+[data-tip]:hover::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+/* 顶部工具栏的按钮提示显示在下方，避免超出屏幕上沿 */
+[data-tip][data-tip-pos="bottom"]::after {
+  bottom: auto;
+  top: calc(100% + 10px);
+  transform: translateX(-50%) translateY(-4px);
+}
+[data-tip][data-tip-pos="bottom"]:hover::after {
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ---------- 全局优雅滚动条（替代原生粗滚动条） ---------- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.45) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.7);
+  background-clip: content-box;
+}

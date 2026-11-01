@@ -3,6 +3,32 @@ import { Folder, Heart, FilePlus, FolderPlus, Monitor, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useMediaStore } from '../../store/useMediaStore';
 
+// 缩略图最长边（网格卡片 ~200px，640 足够 2x 屏清晰）
+const THUMB_MAX = 640;
+// 每批解码的图片数量，避免一次性解码上百张占满解码线程
+const DECODE_CHUNK = 8;
+
+// 后台解码生成缩略图，同时读取原始分辨率。
+// createImageBitmap 在浏览器后台线程解码，不阻塞主线程。
+const buildThumb = async (file) => {
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const width = bitmap.width;
+    const height = bitmap.height;
+    const scale = Math.min(1, THUMB_MAX / Math.max(width, height));
+    const w = Math.max(1, Math.round(width * scale));
+    const h = Math.max(1, Math.round(height * scale));
+    const canvas = new OffscreenCanvas(w, h);
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+    bitmap.close();
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.8 });
+    return { thumbUrl: URL.createObjectURL(blob), width, height };
+  } catch {
+    // 解码失败（如不支持的格式）时返回 null，由调用方回退到原图
+    return null;
+  }
+};
+
 // 带删除按钮的 SidebarItem
 const SidebarItem = ({ icon, label, active, count, onClick, onDelete }) => (
   <div 
@@ -66,27 +92,46 @@ const Sidebar = () => {
         if (parts.length > 1) derivedFolderName = parts[0];
     }
 
-    const newItems = Array.from(fileList)
+    const pairs = Array.from(fileList)
       .filter(f => f.type.startsWith('image/') || f.type.startsWith('video/'))
       .map((f) => ({
-        id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        name: f.name,
-        type: f.type.startsWith('image/') ? 'image' : 'video',
-        url: URL.createObjectURL(f),
-        folder: derivedFolderName,
-        size: f.size,
-        date: new Date(f.lastModified).toISOString(),
-        width: 0,
-        height: 0,
-        isFavorite: false,
-        meta: {}
+        file: f,
+        item: {
+          id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          name: f.name,
+          type: f.type.startsWith('image/') ? 'image' : 'video',
+          url: URL.createObjectURL(f),
+          thumbUrl: null, // 缩略图生成后由 updateItems 写回
+          folder: derivedFolderName,
+          size: f.size,
+          date: new Date(f.lastModified).toISOString(),
+          width: 0,
+          height: 0,
+          isFavorite: false,
+          meta: {}
+        }
       }));
 
+    if (pairs.length === 0) return;
+    const newItems = pairs.map(p => p.item);
     addItems(newItems);
-    
+
     // 导入后自动选中该文件夹
-    if (newItems.length > 0) {
-        setSelectedFolder(derivedFolderName);
+    setSelectedFolder(derivedFolderName);
+
+    // 分批生成缩略图，每批完成一次性写回 store，避免逐张更新触发整表重渲染
+    const imagePairs = pairs.filter(p => p.item.type === 'image');
+    const { updateItems } = useMediaStore.getState();
+    for (let i = 0; i < imagePairs.length; i += DECODE_CHUNK) {
+      const chunk = imagePairs.slice(i, i + DECODE_CHUNK);
+      Promise.all(chunk.map(async ({ file, item }) => {
+        const updates = await buildThumb(file);
+        // 解码失败回退：直接用原图当缩略图，保证卡片总能显示
+        return { id: item.id, updates: updates || { thumbUrl: item.url } };
+      })).then((updates) => {
+        const valid = updates.filter(u => u.updates);
+        if (valid.length > 0) updateItems(valid);
+      }).catch(() => {});
     }
   };
 

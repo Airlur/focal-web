@@ -1,6 +1,16 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
+// 预览页快捷键默认值（key 与 KeyboardEvent.key 一致；空格记为 ' '）
+export const DEFAULT_SHORTCUTS = {
+  prev: 'ArrowLeft',   // 上一张
+  next: 'ArrowRight',  // 下一张
+  close: 'Escape',     // 关闭预览
+  delete: 'Delete',    // 删除
+  reset: ' ',          // 复位视图
+  info: 'i',           // 信息面板
+};
+
 export const useAppStore = create(
   persist(
     (set) => ({
@@ -8,11 +18,11 @@ export const useAppStore = create(
       sidebarOpen: true,
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       
-      darkMode: true, // 默认深色可能更有质感
+      darkMode: false, // 默认浅色模式
       toggleDarkMode: () => set((state) => ({ darkMode: !state.darkMode })),
       
       // 多语言
-      language: 'en', // 'en' | 'zh'
+      language: 'zh', // 'en' | 'zh'，默认中文
       setLanguage: (lang) => set({ language: lang }),
 
       // 设置弹窗
@@ -47,18 +57,26 @@ export const useAppStore = create(
       setFilter: (key, value) => set((state) => ({
         filters: { ...state.filters, [key]: value }
       })),
+
+      // 预览页快捷键（可在设置-快捷键页自定义）
+      shortcuts: { ...DEFAULT_SHORTCUTS },
+      setShortcut: (action, key) => set((state) => ({
+        shortcuts: { ...state.shortcuts, [action]: key }
+      })),
+      resetShortcuts: () => set({ shortcuts: { ...DEFAULT_SHORTCUTS } }),
     }),
     {
       name: 'focal-app-storage',
-      partialize: (state) => ({ 
+      partialize: (state) => ({
         darkMode: state.darkMode,
         language: state.language, // 持久化语言
         viewMode: state.viewMode,
         columns: state.columns,
         sortBy: state.sortBy,
         sortOrder: state.sortOrder,
-        sidebarOpen: state.sidebarOpen
-      }), 
+        sidebarOpen: state.sidebarOpen,
+        shortcuts: state.shortcuts, // 持久化快捷键
+      }),
     }
   )
 );
