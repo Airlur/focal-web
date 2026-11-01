@@ -1,28 +1,41 @@
 import React, { useState, useEffect } from 'react';
-import { X, Command, Monitor, Keyboard, Database, Moon, Sun, Languages, LayoutGrid, ArrowUpDown, RotateCcw } from 'lucide-react';
-import { useAppStore } from '../../store/useAppStore';
+import { X, Command, Monitor, Keyboard, Database, Moon, Sun, Languages, LayoutGrid, ArrowUpDown, RotateCcw, Palette, Sparkles } from 'lucide-react';
+import { useAppStore, eventToCombo, formatKey } from '../../store/useAppStore';
 import { useMediaStore } from '../../store/useMediaStore';
+import { regenerateAllThumbnails } from '../../utils/thumbnails';
 
-// 可自定义的预览页快捷键动作
+// 可自定义的快捷键动作（预览页 + 全局）
 const SHORTCUT_ACTIONS = [
-  { id: 'prev', zh: '上一张', en: 'Previous Media' },
-  { id: 'next', zh: '下一张', en: 'Next Media' },
+  { id: 'prev', zh: '上一个文件', en: 'Previous Media' },
+  { id: 'next', zh: '下一个文件', en: 'Next Media' },
+  { id: 'seekBackward', zh: '快退（视频）', en: 'Seek Backward' },
+  { id: 'seekForward', zh: '快进（视频）', en: 'Seek Forward' },
+  { id: 'playPause', zh: '播放 / 暂停（视频）', en: 'Play / Pause' },
+  { id: 'volumeUp', zh: '音量 +（视频）', en: 'Volume Up' },
+  { id: 'volumeDown', zh: '音量 −（视频）', en: 'Volume Down' },
+  { id: 'fullscreen', zh: '网页全屏', en: 'Fullscreen' },
   { id: 'close', zh: '关闭预览', en: 'Close Viewer' },
   { id: 'reset', zh: '复位视图', en: 'Reset View' },
+  { id: 'zoomIn', zh: '放大', en: 'Zoom In' },
+  { id: 'zoomOut', zh: '缩小', en: 'Zoom Out' },
+  { id: 'oneToOne', zh: '实际大小', en: 'Actual Size' },
+  { id: 'rotateCcw', zh: '逆时针旋转', en: 'Rotate Left' },
+  { id: 'rotateCw', zh: '顺时针旋转', en: 'Rotate Right' },
+  { id: 'mirror', zh: '镜像翻转', en: 'Mirror' },
+  { id: 'slideshow', zh: '幻灯片开关', en: 'Toggle Slideshow' },
   { id: 'info', zh: '信息面板', en: 'Info Panel' },
   { id: 'delete', zh: '删除媒体', en: 'Delete Media' },
+  { id: 'search', zh: '聚焦搜索', en: 'Focus Search' },
+  { id: 'settings', zh: '打开设置', en: 'Open Settings' },
 ];
-
-// 键名美化显示
-const formatKey = (k) => ({
-  ' ': '空格', ArrowLeft: '←', ArrowRight: '→', ArrowUp: '↑', ArrowDown: '↓',
-  Escape: 'Esc', Delete: 'Del', Enter: 'Enter', Tab: 'Tab', Backspace: '⌫',
-}[k] ?? k.toUpperCase());
 
 const SettingsModal = () => {
   const {
     showSettings, setShowSettings, language, setLanguage,
     darkMode, toggleDarkMode,
+    appearance, setAppearance, glassIntensity, setGlassIntensity,
+    slideshowInterval, setSlideshowInterval, thumbnailQuality, setThumbnailQuality,
+    seekStep, setSeekStep,
     viewMode, setViewMode,
     sortBy, setSortBy, sortOrder, setSortOrder,
     shortcuts, setShortcut, resetShortcuts,
@@ -34,24 +47,34 @@ const SettingsModal = () => {
 
   const t = (zh, en) => (language === 'zh' ? zh : en);
 
-  // 录制模式：捕获下一次按键写入 store；Esc 取消；冲突则提示不保存
+  // Esc 关闭设置弹窗（录制改键时由录制监听优先拦截）
+  useEffect(() => {
+    if (!showSettings) return;
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey) setShowSettings(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showSettings, setShowSettings]);
+
+  // 录制模式：捕获下一次按键（支持组合键）写入 store；Esc 取消；冲突则提示不保存
   useEffect(() => {
     if (!recording) return;
     const onKey = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === 'Escape') { setRecording(null); return; }
+      if (e.key === 'Escape' && !e.ctrlKey && !e.altKey && !e.metaKey) { setRecording(null); return; }
       if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return; // 忽略单独的修饰键
-      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      const owner = Object.entries(shortcuts).find(([act, k]) => k === key && act !== recording);
+      const combo = eventToCombo(e);
+      const owner = Object.entries(shortcuts).find(([act, k]) => k === combo && act !== recording);
       if (owner) {
         const ownerLabel = SHORTCUT_ACTIONS.find(a => a.id === owner[0]);
-        setConflict(t(`「${formatKey(key)}」已被「${ownerLabel.zh}」占用，请换一个按键`, `"${formatKey(key)}" is already used by "${ownerLabel.en}"`));
+        setConflict(t(`「${formatKey(combo, language)}」已被「${ownerLabel.zh}」占用，请换一个按键`, `"${formatKey(combo, language)}" is already used by "${ownerLabel.en}"`));
         setTimeout(() => setConflict(null), 3000);
         setRecording(null);
         return;
       }
-      setShortcut(recording, key);
+      setShortcut(recording, combo);
       setRecording(null);
     };
     window.addEventListener('keydown', onKey, true);
@@ -68,7 +91,7 @@ const SettingsModal = () => {
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white dark:bg-gray-900 w-full max-w-3xl h-[600px] rounded-2xl shadow-2xl flex overflow-hidden border border-gray-200 dark:border-gray-800 animate-in fade-in zoom-in duration-200">
+      <div className="glass-chrome glass-strong bg-white dark:bg-gray-900 w-full max-w-3xl h-[600px] rounded-2xl shadow-2xl flex overflow-hidden border border-gray-200 dark:border-gray-800 animate-in fade-in zoom-in duration-200">
         
         {/* 左侧导航 */}
         <div className="w-64 bg-gray-50 dark:bg-gray-950 border-r border-gray-200 dark:border-gray-800 p-4 flex flex-col gap-2">
@@ -104,6 +127,151 @@ const SettingsModal = () => {
               <div className="space-y-8 max-w-md">
                 <div>
                   <h3 className="text-lg font-medium mb-6 dark:text-white">{t('常规设置', 'General')}</h3>
+
+                  {/* 外观风格：经典 / 液态玻璃 */}
+                  <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center gap-3 text-gray-600 dark:text-gray-300">
+                      <Palette size={18} />
+                      <span className="text-sm">{t('外观风格', 'Appearance')}</span>
+                    </div>
+                    <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                      {[
+                        { v: 'classic', label: t('经典', 'Classic') },
+                        { v: 'glass', label: t('液态玻璃', 'Liquid Glass') },
+                      ].map(({ v, label }) => (
+                        <button
+                          key={v}
+                          onClick={() => setAppearance(v)}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                            appearance === v ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 玻璃强度（仅液态玻璃模式下显示） */}
+                  {appearance === 'glass' && (
+                    <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-800">
+                      <div className="flex items-center gap-3 text-gray-600 dark:text-gray-300">
+                        <Sparkles size={18} />
+                        <span className="text-sm">{t('玻璃强度', 'Glass Intensity')}</span>
+                      </div>
+                      <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                        {[
+                          { v: 'subtle', label: t('轻盈', 'Subtle') },
+                          { v: 'standard', label: t('标准', 'Standard') },
+                          { v: 'strong', label: t('浓郁', 'Bold') },
+                        ].map(({ v, label }) => (
+                          <button
+                            key={v}
+                            onClick={() => setGlassIntensity(v)}
+                            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              glassIntensity === v ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 缩略图质量 */}
+                  <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center gap-3 text-gray-600 dark:text-gray-300">
+                      <Sparkles size={18} />
+                      <span className="text-sm">{t('缩略图质量', 'Thumbnail Quality')}</span>
+                    </div>
+                    <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                      {[
+                        { v: 'low', label: t('低', 'Low'), tip: t('480px：最省内存，小卡片足够', '480px: lightest on memory, fine for small cards') },
+                        { v: 'medium', label: t('中', 'Medium'), tip: t('960px：推荐，均衡清晰与内存', '960px: recommended balance') },
+                        { v: 'high', label: t('高', 'High'), tip: t('1440px：大卡片/高分屏最清晰，内存占用更高', '1440px: sharpest for large cards / hi-dpi, more memory') },
+                      ].map(({ v, label, tip }) => (
+                        <button
+                          key={v}
+                          data-tip={tip}
+                          onClick={() => { setThumbnailQuality(v); regenerateAllThumbnails(); }}
+                          className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                            thumbnailQuality === v ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 快进步长 */}
+                  <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center gap-3 text-gray-600 dark:text-gray-300">
+                      <Sparkles size={18} />
+                      <span className="text-sm">{t('快进步长', 'Seek Step')}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                        {[1, 5, 10, 30].map(sec => (
+                          <button
+                            key={sec}
+                            onClick={() => setSeekStep(sec)}
+                            className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              seekStep === sec ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                            }`}
+                          >
+                            {sec}{t('秒', 's')}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="1"
+                          max="120"
+                          value={seekStep}
+                          onChange={(e) => setSeekStep(e.target.value)}
+                          className="w-14 px-2 py-1.5 rounded-md text-xs bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 outline-none focus:ring-2 focus:ring-brand-500/50"
+                        />
+                        <span className="text-xs text-gray-400">{t('秒', 's')}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 幻灯片间隔 */}
+                  <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-800">
+                    <div className="flex items-center gap-3 text-gray-600 dark:text-gray-300">
+                      <Sparkles size={18} />
+                      <span className="text-sm">{t('幻灯片间隔', 'Slideshow Interval')}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                        {[1, 3, 5, 8].map(sec => (
+                          <button
+                            key={sec}
+                            onClick={() => setSlideshowInterval(sec)}
+                            className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                              slideshowInterval === sec ? 'bg-white dark:bg-gray-700 shadow text-brand-600 dark:text-brand-400' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'
+                            }`}
+                          >
+                            {sec}{t('秒', 's')}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="1"
+                          max="60"
+                          value={slideshowInterval}
+                          onChange={(e) => setSlideshowInterval(e.target.value)}
+                          className="w-14 px-2 py-1.5 rounded-md text-xs bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700 outline-none focus:ring-2 focus:ring-brand-500/50"
+                        />
+                        <span className="text-xs text-gray-400">{t('秒', 's')}</span>
+                      </div>
+                    </div>
+                  </div>
 
                   {/* 主题模式 */}
                   <div className="flex items-center justify-between py-3 border-b border-gray-100 dark:border-gray-800">
@@ -198,7 +366,7 @@ const SettingsModal = () => {
                     </div>
                   </div>
                 </div>
-                <p className="text-xs text-gray-400 -mt-4">{t('以上设置即时生效并自动保存，刷新后仍然保留。', 'Changes apply instantly and persist across reloads.')}</p>
+                <p className="text-xs text-gray-400 -mt-4">{t('以上设置即时生效并自动保存。切换缩略图质量会自动重建当前库内所有图片的缩略图，新导入的图片也按该档位生成。', 'Changes apply instantly and persist. Changing thumbnail quality rebuilds all thumbnails in the current library; new imports use the same level.')}</p>
               </div>
             )}
 
@@ -232,7 +400,7 @@ const SettingsModal = () => {
                             : 'bg-gray-100 dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-brand-400 hover:text-brand-600 dark:hover:text-brand-400'
                         }`}
                       >
-                        {recording === a.id ? t('按下新按键…', 'Press a key…') : formatKey(shortcuts[a.id])}
+                        {recording === a.id ? t('按下新按键…', 'Press a key…') : formatKey(shortcuts[a.id], language)}
                       </button>
                     </div>
                   ))}
@@ -240,8 +408,8 @@ const SettingsModal = () => {
 
                 <p className="mt-5 text-xs text-gray-400 leading-relaxed">
                   {t(
-                    '点击右侧按键进行修改，按 Esc 取消录制。Alt+F（聚焦搜索）为固定快捷键。',
-                    'Click a key binding to change it, press Esc to cancel. Alt+F (focus search) is fixed.'
+                    '点击右侧按键进行修改，支持组合键（如 Ctrl+Q），按 Esc 取消录制。所有快捷键均无占用冲突时生效。',
+                    'Click a key binding to change it — modifier combos (e.g. Ctrl+Q) are supported. Press Esc to cancel. All shortcuts are conflict-checked.'
                   )}
                 </p>
               </div>

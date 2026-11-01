@@ -18,8 +18,8 @@ const MediaCard = React.memo(({ item, masonry, onClick, onContextMenu }) => {
     <div className="w-full">
       <div 
         className={`
-          group relative rounded-xl overflow-hidden bg-white dark:bg-gray-800 cursor-pointer 
-          transition-all duration-200 ring-1 ring-gray-200 dark:ring-gray-800 
+          glass-soft group relative rounded-xl overflow-hidden bg-white dark:bg-gray-800 cursor-pointer
+          transition-all duration-200 ring-1 ring-gray-200 dark:ring-gray-800
           ${isHovered ? 'ring-2 ring-brand-500 shadow-lg z-10' : 'shadow-sm'}
           ${masonry ? '' : 'aspect-square'}
         `}

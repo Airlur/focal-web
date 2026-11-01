@@ -3,7 +3,7 @@ import {
   AlignLeft, Search, X, Grid3X3, LayoutGrid, SlidersHorizontal, List, 
   ArrowUp, ArrowDown, Filter, Settings, Moon, Sun, Languages
 } from 'lucide-react';
-import { useAppStore } from '../../store/useAppStore';
+import { useAppStore, matchShortcut, formatKey } from '../../store/useAppStore';
 
 const TopBar = () => {
   const { 
@@ -23,10 +23,10 @@ const TopBar = () => {
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const searchInputRef = useRef(null);
 
-  // 快捷键 Alt+F 聚焦搜索
+  // 快捷键聚焦搜索（默认 Alt+F，可在设置中自定义）
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.altKey && (e.key === 'f' || e.key === 'F')) {
+      if (matchShortcut(e, useAppStore.getState().shortcuts.search)) {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
@@ -57,7 +57,7 @@ const TopBar = () => {
   };
 
   return (
-    <div className="h-16 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 shrink-0 z-20 transition-colors duration-300">
+    <div className="glass-chrome h-16 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 shrink-0 z-20 transition-colors duration-300">
       <div className="flex items-center gap-4 flex-1">
         <button 
           onClick={toggleSidebar} 
@@ -73,7 +73,7 @@ const TopBar = () => {
           <input 
             ref={searchInputRef}
             type="text" 
-            placeholder={language === 'zh' ? "搜索媒体... (Alt+F)" : "Search media... (Alt+F)"}
+            placeholder={language === 'zh' ? `搜索媒体... (${formatKey(useAppStore.getState().shortcuts.search, language)})` : `Search media... (${formatKey(useAppStore.getState().shortcuts.search, language)})`}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm rounded-lg pl-10 pr-8 py-2 w-full focus:outline-none focus:ring-2 focus:ring-brand-500/50 transition-all placeholder-gray-400 dark:placeholder-gray-500"
@@ -139,7 +139,7 @@ const TopBar = () => {
           {showSortMenu && (
             <>
               <div className="fixed inset-0 z-30" onClick={() => setShowSortMenu(false)}></div>
-              <div className="absolute right-0 top-full mt-2 w-32 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-40 flex flex-col overflow-hidden">
+              <div className="glass-chrome absolute right-0 top-full mt-2 w-32 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-40 flex flex-col overflow-hidden">
                 {sortOptions.map(opt => (
                   <button
                     key={opt.value}
@@ -173,7 +173,7 @@ const TopBar = () => {
           {showFilterMenu && (
             <>
               <div className="fixed inset-0 z-30" onClick={() => setShowFilterMenu(false)}></div>
-              <div className="absolute right-0 top-full mt-2 w-40 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-40 flex flex-col overflow-hidden text-sm">
+              <div className="glass-chrome absolute right-0 top-full mt-2 w-40 bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 py-1 z-40 flex flex-col overflow-hidden text-sm">
                  <div className="px-3 py-2 text-xs font-semibold text-gray-400 uppercase bg-gray-50 dark:bg-gray-900/50">{language === 'zh' ? '类型' : 'Type'}</div>
                  {['all', 'image', 'video'].map(type => {
                   const typeLabels = {

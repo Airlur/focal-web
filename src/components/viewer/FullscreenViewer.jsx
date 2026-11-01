@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   ArrowLeft, Info, ChevronLeft, ChevronRight, ZoomOut, ZoomIn,
   RotateCw, RotateCcw, FlipHorizontal, RefreshCw, Maximize, Play, Pause,
-  X, Folder,
+  Volume1, Volume2, VolumeX, Minimize, X, Folder,
   Camera, Aperture, Clock, Gauge
 } from 'lucide-react';
 import exifr from 'exifr';
 import { useMediaStore } from '../../store/useMediaStore';
-import { useAppStore } from '../../store/useAppStore';
+import { useAppStore, eventToCombo } from '../../store/useAppStore';
 
 const formatBytes = (bytes) => {
   if (!+bytes) return '0 Bytes';
@@ -32,7 +32,10 @@ const TEXT = {
     zoomIn: 'Zoom In', zoomOut: 'Zoom Out', rotateCw: 'Rotate Clockwise', rotateCcw: 'Rotate Counterclockwise',
     mirror: 'Mirror', reset: 'Reset View', oneToOne: 'Actual Size (100%)',
     playSlideshow: 'Play Slideshow', pauseSlideshow: 'Pause Slideshow',
-    prev: 'Previous', next: 'Next', back: 'Back'
+    prev: 'Previous', next: 'Next', back: 'Back',
+    play: 'Play', pause: 'Pause', mute: 'Mute', unmute: 'Unmute',
+    fullscreen: 'Fullscreen', exitFullscreen: 'Exit Fullscreen',
+    playbackSpeed: 'Playback Speed'
   },
   zh: {
     info: '信息', fileName: '文件名', resolution: '分辨率', size: '大小', dateModified: '修改日期', folderPath: '文件夹路径',
@@ -40,9 +43,17 @@ const TEXT = {
     zoomIn: '放大', zoomOut: '缩小', rotateCw: '顺时针旋转', rotateCcw: '逆时针旋转',
     mirror: '镜像翻转', reset: '复位视图', oneToOne: '实际大小 (100%)',
     playSlideshow: '播放幻灯片', pauseSlideshow: '暂停幻灯片',
-    prev: '上一张', next: '下一张', back: '返回'
+    prev: '上一张', next: '下一张', back: '返回',
+    play: '播放', pause: '暂停', mute: '静音', unmute: '取消静音',
+    fullscreen: '网页全屏', exitFullscreen: '退出全屏',
+    playbackSpeed: '倍速播放'
   }
 };
+
+// 倍速档位（循环切换）
+const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+// 播放中鼠标静止多久隐藏控件
+const AUTO_HIDE_MS = 2000;
 
 const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
   const [showInfo, setShowInfo] = useState(false); // 默认不自动打开信息面板
@@ -55,12 +66,34 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
   // 适应窗口的缩放比例：zoom=1 时图片显示宽度占原始像素的比例。
   // 百分比按"相对原始像素"展示（1:1 时正好 100%），大图适应窗口时会显示如 25%
   const [fitScale, setFitScale] = useState(1);
+  // 视频自绘控制条状态
+  const [isVideoPlaying, setIsVideoPlaying] = useState(false);
+  const [videoTime, setVideoTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [muted, setMuted] = useState(false);
+  const [videoVolume, setVideoVolume] = useState(1);
+  const [isPageFullscreen, setIsPageFullscreen] = useState(false);
+  const [speedIdx, setSpeedIdx] = useState(2); // 倍速档位（SPEEDS[2] = 1x）
+  // 播放视频时鼠标静止 2 秒自动隐藏全部控件
+  const [chromeVisible, setChromeVisible] = useState(true);
+
+  const hideTimerRef = useRef(null);
+  const volumeRef = useRef(1);
+  const isVideoPlayingRef = useRef(false);
+  volumeRef.current = videoVolume;
+  isVideoPlayingRef.current = isVideoPlaying;
 
   const containerRef = useRef(null);
   const imgRef = useRef(null);
   const dragRef = useRef(null); // { startX, startY, baseX, baseY }
+  const dragMovedRef = useRef(false); // 本次按下后是否发生过拖拽（抑制误触点击）
+  // ref 镜像：让事件回调（含键盘监听旧闭包）始终读到最新值
+  const rotationRef = useRef(0);
+  const fitScaleRef = useRef(1);
+  rotationRef.current = rotation;
+  fitScaleRef.current = fitScale;
   const { deleteItem, updateItem } = useMediaStore();
-  const { language, shortcuts } = useAppStore();
+  const { language, shortcuts, appearance, slideshowInterval } = useAppStore();
   const t = TEXT[language] || TEXT.en;
 
   // 关键修复：从 items 列表中实时获取最新的 item 对象
@@ -76,9 +109,11 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
 
   // 计算 fitScale：img 受 max-w-[90vw]/max-h-[90vh] 约束后的显示宽度 ÷ 原始宽度
   const computeFitScale = () => {
-    const img = imgRef.current;
-    if (!img || !img.naturalWidth) return 1;
-    const w = img.naturalWidth, h = img.naturalHeight;
+    const media = imgRef.current;
+    if (!media) return 1;
+    const w = media.naturalWidth || media.videoWidth;   // 图片 / 视频通用
+    const h = media.naturalHeight || media.videoHeight;
+    if (!w || !h) return 1;
     const fitW = Math.min(window.innerWidth * 0.9, window.innerHeight * 0.9 * (w / h), w);
     return fitW / w;
   };
@@ -91,18 +126,58 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
     return () => window.removeEventListener('resize', onResize);
   }, [currentItem.id, currentItem.type]);
 
+  // 网页全屏状态跟踪；预览组件卸载时自动退出全屏
+  useEffect(() => {
+    const onFs = () => setIsPageFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs);
+      if (document.fullscreenElement) document.exitFullscreen();
+    };
+  }, []);
+  // 音量应用到视频元素（换片/调音量时都生效）
+  useEffect(() => {
+    if (imgRef.current) imgRef.current.volume = videoVolume;
+  }, [videoVolume, currentItem.id]);
+  // 倍速应用到视频元素
+  useEffect(() => {
+    const v = imgRef.current;
+    if (v && typeof v.playbackRate === 'number') v.playbackRate = SPEEDS[speedIdx];
+  }, [speedIdx, currentItem.id]);
+
+  // 播放中鼠标静止 2 秒自动隐藏控件；移动鼠标或暂停时恢复
+  const pokeChrome = () => {
+    setChromeVisible(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    hideTimerRef.current = setTimeout(() => {
+      if (isVideoPlayingRef.current) setChromeVisible(false);
+    }, AUTO_HIDE_MS);
+  };
+  useEffect(() => {
+    if (!isVideoPlaying) {
+      setChromeVisible(true);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    } else {
+      pokeChrome();
+    }
+  }, [isVideoPlaying]);
+
   // --- 拖拽平移 ---
   const handlePointerDown = (e) => {
     if (e.button !== 0) return;
     dragRef.current = { startX: e.clientX, startY: e.clientY, baseX: offset.x, baseY: offset.y };
+    dragMovedRef.current = false;
     setIsDragging(true);
     e.currentTarget.setPointerCapture(e.pointerId);
   };
   const handlePointerMove = (e) => {
     if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) dragMovedRef.current = true;
     setOffset({
-      x: dragRef.current.baseX + e.clientX - dragRef.current.startX,
-      y: dragRef.current.baseY + e.clientY - dragRef.current.startY,
+      x: dragRef.current.baseX + dx,
+      y: dragRef.current.baseY + dy,
     });
   };
   const handlePointerUp = () => {
@@ -120,14 +195,75 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
     setZoom(Math.min(1 / fitScale, 12));
   };
 
-  // --- 幻灯片自动播放（每 3 秒下一张） ---
+  // 旋转到 90°/270° 时计算"旋转后自动适配画面"的缩放；转回 0°/180° 恢复适应窗口
+  const computeRotateFit = (rot) => {
+    const media = imgRef.current;
+    if (!media) return 1;
+    const w = media.naturalWidth || media.videoWidth;
+    const h = media.naturalHeight || media.videoHeight;
+    if (!w || !h) return 1;
+    const norm = ((rot % 360) + 360) % 360;
+    if (norm !== 90 && norm !== 270) return 1;
+    const fw = fitScaleRef.current * w;
+    const fh = fitScaleRef.current * h;
+    return Math.min((window.innerWidth * 0.9) / fh, (window.innerHeight * 0.9) / fw, 12);
+  };
+  const applyRotate = (delta) => {
+    const nr = (((rotationRef.current + delta) % 360) + 360) % 360;
+    setRotation(nr);
+    setZoom(computeRotateFit(nr));
+    setOffset({ x: 0, y: 0 });
+  };
+
+  // --- 幻灯片自动播放（间隔可在 设置-常规 调整，默认 3 秒） ---
   const navigateRef = useRef(null);
   navigateRef.current = () => handleNavigate('next');
   useEffect(() => {
     if (!isPlaying || currentItem.type !== 'image') return;
-    const id = setInterval(() => navigateRef.current(), 3000);
+    const id = setInterval(() => navigateRef.current(), slideshowInterval * 1000);
     return () => clearInterval(id);
-  }, [isPlaying, currentItem.type]);
+  }, [isPlaying, currentItem.type, slideshowInterval]);
+
+  // --- 视频自绘控制条 ---
+  const toggleVideoPlay = () => {
+    const v = imgRef.current;
+    if (!v || typeof v.play !== 'function') return; // 图片没有播放概念
+    if (v.paused) v.play(); else v.pause();
+  };
+  const seekVideo = (val) => {
+    const v = imgRef.current;
+    if (v && v.duration) v.currentTime = (val / 1000) * v.duration;
+  };
+  // 快进/快退（步长见 设置-常规-快进步长，仅视频有效）
+  const seekBy = (sec) => {
+    const v = imgRef.current;
+    if (!v || !v.duration) return;
+    v.currentTime = Math.min(Math.max(0, v.currentTime + sec), v.duration);
+  };
+  // 音量增减（仅视频有效）
+  const changeVolume = (delta) => {
+    const v = imgRef.current;
+    if (!v || currentItem.type !== 'video') return;
+    const nv = Math.min(1, Math.max(0, Math.round((volumeRef.current + delta) * 10) / 10));
+    setVideoVolume(nv);
+    v.volume = nv;
+    if (nv > 0 && muted) { setMuted(false); v.muted = false; }
+  };
+  const cycleSpeed = () => setSpeedIdx(i => (i + 1) % SPEEDS.length);
+  const toggleMuted = () => {
+    const v = imgRef.current;
+    if (!v) return;
+    v.muted = !v.muted;
+    setMuted(v.muted);
+    if (!v.muted && videoVolume === 0) {
+      v.volume = 0.5;
+      setVideoVolume(0.5);
+    }
+  };
+  const togglePageFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  };
 
   // --- Task 5: 核心逻辑 - 元数据解析 ---
   
@@ -148,6 +284,8 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
             f: output?.FNumber,
             // 格式化快门速度，如果小于1秒显示为分数 (1/xx)
             exposure: output?.ExposureTime ? (output.ExposureTime >= 1 ? output.ExposureTime : `1/${Math.round(1/output.ExposureTime)}`) : '',
+            // 部分设备会写出 0 或 "00"，统一视为无数据
+            iso: output?.ISO && Number(output.ISO) ? output.ISO : undefined,
             date: output?.DateTimeOriginal || currentItem.date
           }
         });
@@ -167,6 +305,7 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
     
     // 修复：放宽判断条件，只要是视频就尝试更新，确保分辨率和时长被捕获
     // 这样可以解决第一次打开不显示信息的问题
+    setVideoDuration(v.duration || 0);
     updateItem(currentItem.id, {
       width: v.videoWidth,
       height: v.videoHeight,
@@ -178,18 +317,36 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
     });
   };
 
-  // 键盘事件监听（快捷键可在 设置-快捷键页 自定义）
+  // 键盘事件监听（快捷键可在 设置-快捷键页 自定义，支持组合键）
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      // 单字符键统一小写匹配（如 'I'/'i'），功能键保留原名（ArrowLeft 等）
-      const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-      if (key === shortcuts.next) handleNavigate('next');
-      else if (key === shortcuts.prev) handleNavigate('prev');
-      else if (key === shortcuts.close) onClose();
-      else if (key === shortcuts.delete) handleDelete();
-      else if (key === shortcuts.reset) { e.preventDefault(); handleReset(); }
-      else if (key === shortcuts.info) setShowInfo(prev => !prev);
+      // 网页全屏时快捷键让位给浏览器（Esc 退出全屏而非关闭预览）
+      if (document.fullscreenElement) return;
+      // 设置弹窗打开时，预览快捷键全部让位
+      if (useAppStore.getState().showSettings) return;
+      // 全局快捷键（搜索 / 设置）让位给对应的全局监听
+      const combo = eventToCombo(e);
+      if (combo === shortcuts.search || combo === shortcuts.settings) return;
+      const hit = (action) => combo === shortcuts[action];
+      if (hit('next')) { e.preventDefault(); handleNavigate('next'); }
+      else if (hit('prev')) { e.preventDefault(); handleNavigate('prev'); }
+      else if (hit('close')) { e.preventDefault(); onClose(); }
+      else if (hit('delete')) { e.preventDefault(); handleDelete(); }
+      else if (hit('reset')) { e.preventDefault(); handleReset(); }
+      else if (hit('info')) { e.preventDefault(); setShowInfo(prev => !prev); }
+      else if (hit('slideshow')) { e.preventDefault(); if (currentItem.type === 'image') setIsPlaying(v => !v); }
+      else if (hit('playPause')) { e.preventDefault(); toggleVideoPlay(); }
+      else if (hit('fullscreen')) { e.preventDefault(); togglePageFullscreen(); }
+      else if (hit('seekForward')) { e.preventDefault(); seekBy(useAppStore.getState().seekStep); }
+      else if (hit('seekBackward')) { e.preventDefault(); seekBy(-useAppStore.getState().seekStep); }
+      else if (hit('volumeUp')) { e.preventDefault(); changeVolume(0.1); }
+      else if (hit('volumeDown')) { e.preventDefault(); changeVolume(-0.1); }
+      else if (hit('zoomIn')) { e.preventDefault(); setZoom(z => Math.min(12, z + 0.1)); }
+      else if (hit('zoomOut')) { e.preventDefault(); setZoom(z => Math.max(0.2, z - 0.1)); }
+      else if (hit('oneToOne')) { e.preventDefault(); handleOneToOne(); }
+      else if (hit('rotateCw')) { e.preventDefault(); applyRotate(90); }
+      else if (hit('rotateCcw')) { e.preventDefault(); applyRotate(-90); }
+      else if (hit('mirror')) { e.preventDefault(); setFlip(f => !f); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -233,20 +390,36 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
 
   const isImg = currentItem.type === 'image';
 
+  // 位置指示：当前媒体在当前筛选列表中的序号（随删除/导航实时更新）
+  const currentIndex = items.findIndex(i => i.id === currentItem.id);
+  const posText = currentIndex >= 0 ? `${currentIndex + 1} / ${items.length}` : `- / ${items.length}`;
+
   return (
-    <div className="group fixed inset-0 z-50 bg-black flex items-center justify-center select-none outline-none overflow-hidden" tabIndex={-1} autoFocus ref={containerRef}>
+    <div className="group fixed inset-0 z-50 bg-black flex items-center justify-center select-none outline-none overflow-hidden" tabIndex={-1} autoFocus ref={containerRef} onMouseMove={pokeChrome} onMouseDown={pokeChrome}>
       {/* 导航箭头 (Fixed定位) */}
-      <button data-tip={t.prev} onClick={(e) => { e.stopPropagation(); handleNavigate('prev'); }} className="fixed left-4 top-1/2 -translate-y-1/2 p-4 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-all outline-none z-[60]"><ChevronLeft size={40} /></button>
-      <button data-tip={t.next} onClick={(e) => { e.stopPropagation(); handleNavigate('next'); }} className="fixed right-4 top-1/2 -translate-y-1/2 p-4 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-all outline-none z-[60]"><ChevronRight size={40} /></button>
+      <button data-tip={t.prev} onClick={(e) => { e.stopPropagation(); handleNavigate('prev'); }} className={`fixed left-4 top-1/2 -translate-y-1/2 p-4 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-all outline-none z-[60] ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}><ChevronLeft size={40} /></button>
+      <button data-tip={t.next} onClick={(e) => { e.stopPropagation(); handleNavigate('next'); }} className={`fixed right-4 top-1/2 -translate-y-1/2 p-4 rounded-full hover:bg-white/10 text-white/50 hover:text-white transition-all outline-none z-[60] ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}><ChevronRight size={40} /></button>
 
       <div className="absolute inset-0 flex">
         {/* 主展示区 */}
-        <div className="flex-1 relative flex items-center justify-center overflow-hidden bg-black" onClick={() => handleReset()}>
+        <div className="flex-1 relative flex items-center justify-center overflow-hidden bg-black" onDoubleClick={() => handleReset()}>
+          {/* 液态玻璃模式：当前图片高斯模糊放大作背景层，让工具栏/信息面板的玻璃有色彩可透 */}
+          {appearance === 'glass' && isImg && (
+            <div className="absolute inset-0 overflow-hidden" aria-hidden="true">
+              <img
+                src={currentItem.url}
+                className="w-full h-full object-cover scale-110 blur-3xl brightness-[.55] saturate-150 pointer-events-none"
+                draggable={false}
+                alt=""
+              />
+            </div>
+          )}
           {isImg ? (
              <div
                className={`relative origin-center ${isDragging ? '' : 'transition-transform duration-200 ease-out'}`}
                style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom}) rotate(${rotation}deg) scaleX(${flip ? -1 : 1})`, touchAction: 'none' }}
                onClick={(e) => e.stopPropagation()}
+               onDoubleClick={(e) => { e.stopPropagation(); handleReset(); }}
                onPointerDown={handlePointerDown}
                onPointerMove={handlePointerMove}
                onPointerUp={handlePointerUp}
@@ -255,19 +428,89 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
                <img ref={imgRef} src={currentItem.url} onLoad={() => setFitScale(computeFitScale())} className="max-w-[90vw] max-h-[90vh] object-contain shadow-2xl cursor-grab active:cursor-grabbing" draggable={false} alt={currentItem.name} />
              </div>
           ) : (
-             <video 
-                src={currentItem.url} 
-                controls 
-                autoPlay 
-                className="max-w-[90%] max-h-[90%] shadow-2xl outline-none" 
-                onClick={(e) => e.stopPropagation()}
-                onLoadedMetadata={handleVideoMetadata} // 核心：加载元数据
-             />
+             <div
+               className={`relative origin-center ${isDragging ? '' : 'transition-transform duration-200 ease-out'}`}
+               style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom}) rotate(${rotation}deg) scaleX(${flip ? -1 : 1})`, touchAction: 'none' }}
+               onClick={(e) => {
+                 e.stopPropagation();
+                 if (!dragMovedRef.current) toggleVideoPlay(); // 拖拽结束后误触的 click 不切播放
+               }}
+               onDoubleClick={(e) => { e.stopPropagation(); handleReset(); }}
+               onPointerDown={handlePointerDown}
+               onPointerMove={handlePointerMove}
+               onPointerUp={handlePointerUp}
+               onPointerCancel={handlePointerUp}
+             >
+               <video
+                  ref={imgRef}
+                  src={currentItem.url}
+                  autoPlay
+                  onLoadedMetadata={(e) => { handleVideoMetadata(e); setFitScale(computeFitScale()); }}
+                  onTimeUpdate={(e) => setVideoTime(e.target.currentTime)}
+                  onPlay={() => setIsVideoPlaying(true)}
+                  onPause={() => setIsVideoPlaying(false)}
+                  className="max-w-[90vw] max-h-[90vh] shadow-2xl outline-none cursor-grab active:cursor-grabbing"
+               />
+             </div>
+          )}
+
+          {/* 视频自绘控制条：贴底通栏（渐变压暗），音量悬浮展开滑杆，网页全屏开关 */}
+          {!isImg && (
+            <div
+              className={`absolute bottom-0 left-0 right-0 z-10 flex items-center gap-3 px-4 py-2 bg-gradient-to-t from-black/85 via-black/55 to-transparent backdrop-blur-sm text-white/90 transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+              onClick={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+            >
+              <button data-tip={isVideoPlaying ? t.pause : t.play} onClick={toggleVideoPlay} className="p-1.5 hover:bg-white/20 rounded">
+                {isVideoPlaying ? <Pause size={18} /> : <Play size={18} />}
+              </button>
+              <span className="text-xs font-mono tabular-nums w-11 text-right">{formatDuration(videoTime)}</span>
+              <input
+                type="range"
+                min="0"
+                max="1000"
+                value={videoDuration ? Math.round((videoTime / videoDuration) * 1000) : 0}
+                onChange={(e) => seekVideo(Number(e.target.value))}
+                className="flex-1 accent-white cursor-pointer"
+              />
+              <span className="text-xs font-mono tabular-nums w-11">{formatDuration(videoDuration)}</span>
+              <button
+                data-tip={t.playbackSpeed}
+                onClick={cycleSpeed}
+                className="px-2 h-[30px] hover:bg-white/20 rounded text-xs font-mono tabular-nums"
+              >
+                {SPEEDS[speedIdx]}x
+              </button>
+              <div className="flex items-center group/vol">
+                <button
+                  data-tip={muted || videoVolume === 0 ? t.unmute : t.mute}
+                  onClick={toggleMuted}
+                  className="p-1.5 hover:bg-white/20 rounded"
+                >
+                  {muted || videoVolume === 0 ? <VolumeX size={18} /> : videoVolume < 0.5 ? <Volume1 size={18} /> : <Volume2 size={18} />}
+                </button>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={Math.round(videoVolume * 100)}
+                  onChange={(e) => { setVideoVolume(Number(e.target.value) / 100); if (muted) setMuted(false); }}
+                  className="w-0 opacity-0 group-hover/vol:w-20 group-hover/vol:opacity-100 transition-all duration-200 accent-white cursor-pointer"
+                />
+              </div>
+              <button
+                data-tip={isPageFullscreen ? t.exitFullscreen : t.fullscreen}
+                onClick={togglePageFullscreen}
+                className="p-1.5 hover:bg-white/20 rounded"
+              >
+                {isPageFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+              </button>
+            </div>
           )}
         </div>
 
         {/* 右侧信息面板（top-16：从顶部工具栏下方开始，不遮挡工具栏按钮） */}
-        <div className={`absolute right-0 top-16 bottom-0 w-80 bg-[#111]/95 backdrop-blur-md border-l border-white/10 flex flex-col z-[70] transition-transform duration-300 ease-in-out ${showInfo ? 'translate-x-0' : 'translate-x-full'} rounded-tl-xl`} onClick={(e) => e.stopPropagation()}>
+        <div className={`glass-panel glass-panel-strong absolute right-0 top-16 bottom-0 w-80 bg-[#111]/95 backdrop-blur-md border-l border-white/10 flex flex-col z-[70] transition-transform duration-300 ease-in-out ${showInfo ? 'translate-x-0' : 'translate-x-full'} rounded-tl-xl`} onClick={(e) => e.stopPropagation()}>
            <div className="p-5 border-b border-white/10 flex justify-between items-center flex-shrink-0">
               <h4 className="text-white font-semibold">{t.info}</h4>
               <button onClick={() => setShowInfo(false)} className="text-gray-400 hover:text-white transition-colors"><X size={18} /></button>
@@ -346,26 +589,32 @@ const FullscreenViewer = ({ item, items, onClose, onNavigate }) => {
       </div>
 
       {/* 顶部工具栏（统一 18px 图标 + 同款玻璃容器） */}
-      <div className="absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-[60] pointer-events-none">
-         <button data-tip={t.back} onClick={onClose} className="pointer-events-auto text-white/80 hover:text-white p-2 rounded-full bg-black/40 hover:bg-white/10 backdrop-blur-md border border-white/10 transition-colors"><ArrowLeft size={18} /></button>
-         <div className="flex items-center gap-2 pointer-events-auto">
-             {isImg && (
-               <div className="flex bg-black/40 backdrop-blur-md rounded-lg p-1 text-white/80 border border-white/10">
+      <div className={`absolute top-0 left-0 right-0 p-4 flex justify-between items-start z-[60] pointer-events-none transition-opacity duration-300 ${chromeVisible ? 'opacity-100' : 'opacity-0'}`}>
+         <div className={`flex items-center gap-2 ${chromeVisible ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+            <button data-tip={t.back} data-tip-pos="bottom" onClick={onClose} className="text-white/80 hover:text-white p-2 rounded-full bg-black/40 hover:bg-white/10 backdrop-blur-md border border-white/10 transition-colors"><ArrowLeft size={18} /></button>
+            {/* 位置指示胶囊：21 / 54 */}
+            <div className="glass-panel flex items-center h-[34px] px-3.5 rounded-full bg-black/40 backdrop-blur-md border border-white/10">
+               <span className="text-xs font-mono tabular-nums text-white/85 tracking-wider">{posText}</span>
+            </div>
+         </div>
+         <div className={`flex items-center gap-2 ${chromeVisible ? 'pointer-events-auto' : 'pointer-events-none'}`}>
+             {(
+               <div className="glass-panel flex bg-black/40 backdrop-blur-md rounded-lg p-1 text-white/80 border border-white/10">
                  <button data-tip={t.zoomOut} data-tip-pos="bottom" onClick={() => setZoom(z => Math.max(0.2, z - 0.1))} className="p-1.5 hover:bg-white/20 rounded"><ZoomOut size={18} /></button>
                  <span className="px-1 text-xs flex items-center font-mono w-10 justify-center" title="相对原始像素的缩放比例">{Math.round(zoom * fitScale * 100)}%</span>
                  <button data-tip={t.zoomIn} data-tip-pos="bottom" onClick={() => setZoom(z => Math.min(12, z + 0.1))} className="p-1.5 hover:bg-white/20 rounded"><ZoomIn size={18} /></button>
                  <div className="w-px h-4 bg-white/20 mx-1 my-auto"></div>
-                 <button data-tip={t.rotateCcw} data-tip-pos="bottom" onClick={() => setRotation(r => r - 90)} className="p-1.5 hover:bg-white/20 rounded"><RotateCcw size={18} /></button>
-                 <button data-tip={t.rotateCw} data-tip-pos="bottom" onClick={() => setRotation(r => r + 90)} className="p-1.5 hover:bg-white/20 rounded"><RotateCw size={18} /></button>
+                 <button data-tip={t.rotateCcw} data-tip-pos="bottom" onClick={() => applyRotate(-90)} className="p-1.5 hover:bg-white/20 rounded"><RotateCcw size={18} /></button>
+                 <button data-tip={t.rotateCw} data-tip-pos="bottom" onClick={() => applyRotate(90)} className="p-1.5 hover:bg-white/20 rounded"><RotateCw size={18} /></button>
                  <button data-tip={t.mirror} data-tip-pos="bottom" onClick={() => setFlip(f => !f)} className={`p-1.5 hover:bg-white/20 rounded ${flip ? 'text-brand-400' : ''}`}><FlipHorizontal size={18} /></button>
                  <div className="w-px h-4 bg-white/20 mx-1 my-auto"></div>
                  <button data-tip={t.oneToOne} data-tip-pos="bottom" onClick={handleOneToOne} className="p-1.5 hover:bg-white/20 rounded"><Maximize size={18} /></button>
-                 <button data-tip={isPlaying ? t.pauseSlideshow : t.playSlideshow} data-tip-pos="bottom" onClick={() => setIsPlaying(p => !p)} className={`p-1.5 hover:bg-white/20 rounded ${isPlaying ? 'text-brand-400' : ''}`}>{isPlaying ? <Pause size={18} /> : <Play size={18} />}</button>
+                 {isImg && <button data-tip={isPlaying ? t.pauseSlideshow : t.playSlideshow} data-tip-pos="bottom" onClick={() => setIsPlaying(p => !p)} className={`p-1.5 hover:bg-white/20 rounded ${isPlaying ? 'text-brand-400' : ''}`}>{isPlaying ? <Pause size={18} /> : <Play size={18} />}</button>}
                  <div className="w-px h-4 bg-white/20 mx-1 my-auto"></div>
                  <button data-tip={t.reset} data-tip-pos="bottom" onClick={handleReset} className="p-1.5 hover:bg-white/20 rounded"><RefreshCw size={18} /></button>
                </div>
              )}
-             <div className="flex bg-black/40 backdrop-blur-md rounded-lg p-1 text-white/80 border border-white/10">
+             <div className="glass-panel flex bg-black/40 backdrop-blur-md rounded-lg p-1 text-white/80 border border-white/10">
                <button data-tip={t.info} data-tip-pos="bottom" onClick={() => setShowInfo(!showInfo)} className={`p-1.5 rounded transition-colors ${showInfo ? 'bg-white/20 text-white' : 'hover:bg-white/20'}`}><Info size={18} /></button>
              </div>
          </div>

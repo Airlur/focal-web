@@ -197,11 +197,11 @@ const MainContent = ({ onFullscreen }) => {
   };
 
   return (
-    <div className="flex-1 relative min-h-0 bg-[#FAFAFA] dark:bg-[#0a0a0a]" onClick={closeContextMenu}>
+    <div className="main-area flex-1 relative min-h-0 bg-[#FAFAFA] dark:bg-[#0a0a0a]" onClick={closeContextMenu}>
       {renderContent()}
       
       {/* 底部状态栏 */}
-      <div className="fixed bottom-0 right-0 left-64 h-8 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 text-xs text-gray-500 shrink-0 z-10">
+      <div className="glass-chrome fixed bottom-0 right-0 left-64 h-8 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between px-4 text-xs text-gray-500 shrink-0 z-10">
           <div>{language === 'zh' ? `${filteredAndSortedItems.length} 项` : `${filteredAndSortedItems.length} items`}</div>
           <div>
             {viewMode === 'masonry'
@@ -215,7 +215,7 @@ const MainContent = ({ onFullscreen }) => {
 
       {/* 右键菜单 */}
       {contextMenu && (
-        <div className="fixed z-50 bg-white dark:bg-gray-800 shadow-xl rounded-lg border border-gray-100 dark:border-gray-700 py-1 w-48 text-sm" style={{ top: contextMenu.y, left: contextMenu.x }} onMouseLeave={closeContextMenu}>
+        <div className="glass-chrome fixed z-50 bg-white dark:bg-gray-800 shadow-xl rounded-lg border border-gray-100 dark:border-gray-700 py-1 w-48 text-sm" style={{ top: contextMenu.y, left: contextMenu.x }} onMouseLeave={closeContextMenu}>
            <button onClick={() => { onFullscreen(items.find(i => i.id === contextMenu.itemId)); closeContextMenu(); }} className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 flex items-center gap-2"><Maximize2 size={14} /> {language === 'zh' ? '打开' : 'Open'}</button>
            <button onClick={() => handleFavorite(contextMenu.itemId)} className="w-full text-left px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-700 dark:text-gray-200 flex items-center gap-2"><Heart size={14} /> {language === 'zh' ? '收藏' : 'Favorite'}</button>
            <div className="h-px bg-gray-100 dark:bg-gray-700 my-1"></div>

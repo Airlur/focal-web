@@ -79,3 +79,175 @@ html, body, #root {
   background: rgba(100, 116, 139, 0.7);
   background-clip: content-box;
 }
+
+/* ---------- 液态玻璃外观模式 ---------- */
+/* 仅在 .app-glass 下生效，classic（经典）模式完全不受影响。
+   原则：只替换表面材质，不改任何形状 / 图标 / 布局。 */
+
+/* 三档强度变量：轻盈 subtle / 标准 standard / 浓郁 strong
+   --g-*-tint 常规浮层；--g-*-tint-strong 大面积文字面板（信息面板/设置弹窗），不透明度更高保证可读性 */
+.app-glass[data-glass-intensity="subtle"] {
+  --g-blur: 14px; --g-sat: 1.35;
+  --g-light-tint: rgba(255, 255, 255, 0.55); --g-dark-tint: rgba(24, 26, 32, 0.42);
+  --g-light-tint-strong: rgba(255, 255, 255, 0.74); --g-dark-tint-strong: rgba(24, 26, 32, 0.60);
+  --g-hi: 0.18; --g-shadow: 0.28;
+}
+.app-glass[data-glass-intensity="standard"] {
+  --g-blur: 20px; --g-sat: 1.6;
+  --g-light-tint: rgba(255, 255, 255, 0.62); --g-dark-tint: rgba(24, 26, 32, 0.55);
+  --g-light-tint-strong: rgba(255, 255, 255, 0.80); --g-dark-tint-strong: rgba(24, 26, 32, 0.68);
+  --g-hi: 0.28; --g-shadow: 0.30;
+}
+.app-glass[data-glass-intensity="strong"] {
+  --g-blur: 30px; --g-sat: 1.95;
+  --g-light-tint: rgba(255, 255, 255, 0.72); --g-dark-tint: rgba(24, 26, 32, 0.68);
+  --g-light-tint-strong: rgba(255, 255, 255, 0.86); --g-dark-tint-strong: rgba(24, 26, 32, 0.76);
+  --g-hi: 0.38; --g-shadow: 0.34;
+}
+
+
+
+/* 全局氛围底色：玻璃需要"透出色彩"才有质感，经典模式没有这层 */
+.app-shell.app-glass {
+  position: relative; /* .ambient-wash 的定位基准 */
+}
+/* 氛围彩色场：真实 DOM 图层（不是背景、不是伪元素）——
+   真实绘制的图层必然进入 backdrop-filter 的取样，玻璃必然有色彩可透 */
+.app-glass .ambient-wash {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: #e7f8f4;
+  background-image:
+    linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.35) 44%, transparent 58%),
+    radial-gradient(46% 52% at 62% 16%, rgba(45, 212, 191, 0.42), transparent 72%),
+    radial-gradient(50% 58% at 88% 50%, rgba(56, 189, 248, 0.40), transparent 72%),
+    radial-gradient(55% 50% at 56% 86%, rgba(20, 184, 166, 0.36), transparent 72%),
+    radial-gradient(42% 46% at 32% 52%, rgba(94, 234, 212, 0.32), transparent 72%),
+    radial-gradient(48% 44% at 16% 10%, rgba(14, 165, 233, 0.34), transparent 70%);
+}
+.dark.app-glass .ambient-wash {
+  background-color: #0a191b;
+  background-image:
+    linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.14) 44%, transparent 58%),
+    radial-gradient(46% 52% at 62% 16%, rgba(45, 212, 191, 0.32), transparent 72%),
+    radial-gradient(50% 58% at 88% 50%, rgba(56, 189, 248, 0.30), transparent 72%),
+    radial-gradient(55% 50% at 56% 86%, rgba(13, 148, 136, 0.30), transparent 72%),
+    radial-gradient(42% 46% at 32% 52%, rgba(45, 212, 191, 0.24), transparent 72%),
+    radial-gradient(48% 44% at 16% 10%, rgba(14, 165, 233, 0.40), transparent 70%);
+}
+.dark.app-shell.app-glass {
+  background-color: #0a191b;
+  background-image:
+    linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.14) 44%, transparent 58%),
+    radial-gradient(46% 52% at 62% 16%, rgba(45, 212, 191, 0.32), transparent 72%),
+    radial-gradient(50% 58% at 88% 50%, rgba(56, 189, 248, 0.30), transparent 72%),
+    radial-gradient(55% 50% at 56% 86%, rgba(13, 148, 136, 0.30), transparent 72%),
+    radial-gradient(42% 46% at 32% 52%, rgba(45, 212, 191, 0.24), transparent 72%),
+    radial-gradient(48% 44% at 16% 10%, rgba(14, 165, 233, 0.40), transparent 70%);
+}
+
+/* 内容区背景透出氛围光 */
+/* 主内容区：白纱 + 薄荷彩色场直接合成为自身多层背景（纯 background 实现）。
+   不用 backdrop-filter——彻底避开层叠上下文/取样/fixed 包含块三类陷阱；
+   白纱用 --g-*-tint 变量，强度档位与侧边栏保持一致。 */
+.app-shell.app-glass .app-content {
+  background:
+    linear-gradient(var(--g-light-tint), var(--g-light-tint)),
+    linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.18) 44%, transparent 58%),
+    radial-gradient(46% 52% at 62% 16%, rgba(45, 212, 191, 0.45), transparent 72%),
+    radial-gradient(50% 58% at 88% 50%, rgba(56, 189, 248, 0.42), transparent 72%),
+    radial-gradient(55% 50% at 56% 86%, rgba(20, 184, 166, 0.38), transparent 72%),
+    radial-gradient(42% 46% at 32% 52%, rgba(94, 234, 212, 0.34), transparent 72%),
+    linear-gradient(165deg, #e7f8f4 0%, #eef7fd 48%, #e8f5f1 100%);
+}
+/* 主内容区玻璃层：与侧边栏/顶栏同款材质（blur + 饱和 + 半透明 tint）。
+   用 ::before 承载而非直接加在元素上，避免 backdrop-filter 改变内部
+   fixed 元素（状态栏/右键菜单）的定位基准。 */
+
+.dark.app-shell.app-glass .app-content {
+  background:
+    linear-gradient(var(--g-dark-tint), var(--g-dark-tint)),
+    linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.10) 44%, transparent 58%),
+    radial-gradient(46% 52% at 62% 16%, rgba(45, 212, 191, 0.34), transparent 72%),
+    radial-gradient(50% 58% at 88% 50%, rgba(56, 189, 248, 0.32), transparent 72%),
+    radial-gradient(55% 50% at 56% 86%, rgba(13, 148, 136, 0.32), transparent 72%),
+    radial-gradient(42% 46% at 32% 52%, rgba(45, 212, 191, 0.26), transparent 72%),
+    linear-gradient(165deg, #0a191b 0%, #0a1016 48%, #0a1614 100%);
+}
+
+/* 主列表区：玻璃模式下透明，露出 app-content 的薄荷玻璃合成背景 */
+.app-shell.app-glass .main-area {
+  background: transparent;
+}
+
+/* 侧边栏底部按钮区：玻璃模式下与侧栏同材质，消除拼接色差 */
+.app-shell.app-glass .sidebar-footer {
+  background-color: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: rgba(15, 23, 42, 0.08);
+}
+.dark.app-shell.app-glass .sidebar-footer {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* 主题跟随的铬面（侧边栏 / 顶栏 / 状态栏 / 右键菜单 / 设置弹窗）：真玻璃 */
+.app-shell.app-glass .glass-chrome {
+  background-color: var(--g-light-tint);
+  -webkit-backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat));
+  backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat));
+  border-color: rgba(15, 23, 42, 0.08);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(0.4 + var(--g-hi) * 0.6)),
+    0 8px 30px rgba(15, 23, 42, calc(var(--g-shadow) * 0.35));
+}
+.app-shell.app-glass > .glass-chrome {
+  position: relative;
+  z-index: 1; /* 侧边栏抬到彩色场图层之上 */
+}
+.dark.app-shell.app-glass .glass-chrome {
+  background-color: var(--g-dark-tint);
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, calc(var(--g-hi) * 0.8)),
+    0 8px 30px rgba(0, 0, 0, var(--g-shadow));
+}
+
+/* 大面积文字面板加强不透明度（需在 .glass-chrome 之后定义以生效） */
+.app-shell.app-glass .glass-strong {
+  background-color: var(--g-light-tint-strong);
+}
+.dark.app-shell.app-glass .glass-strong {
+  background-color: var(--g-dark-tint-strong);
+}
+
+/* 预览页专用面板（永远在深色画面上）：真玻璃，恒用深色配方 */
+.app-shell.app-glass .glass-panel {
+  background-color: var(--g-dark-tint);
+  -webkit-backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat));
+  backdrop-filter: blur(var(--g-blur)) saturate(var(--g-sat));
+  border-color: rgba(255, 255, 255, 0.10);
+  border-top-color: rgba(255, 255, 255, calc(var(--g-hi) * 0.9));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, var(--g-hi)),
+    0 10px 34px rgba(0, 0, 0, var(--g-shadow));
+}
+.app-shell.app-glass .glass-panel-strong {
+  background-color: var(--g-dark-tint-strong);
+}
+
+/* 媒体卡片：轻量透明（无 backdrop-filter，数千张也不掉帧） */
+.app-shell.app-glass .glass-soft {
+  background-color: var(--g-light-tint);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    0 4px 16px rgba(15, 23, 42, 0.10);
+}
+.dark.app-shell.app-glass .glass-soft {
+  background-color: var(--g-dark-tint);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 4px 16px rgba(0, 0, 0, 0.40);
+}
